@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
+import { ethers } from "ethers";
+import { getCVPaymentContract } from "../utils/cvPayment";
 
 const Resume = () => {
   const navigate = useNavigate();
@@ -38,81 +40,147 @@ const Resume = () => {
   // Debug: Log when the component mounts and the ref is set
   useEffect(() => {
     console.log("Component mounted, componentRef:", componentRef.current);
-    console.log("qqqqqqqqqqqqqqqqqqqqq", componentRef.current);
   }, []);
 
   const handleDownload = async () => {
     setIsDownloading(true);
-    console.log("Initiating PDF generation...");
     try {
-      const element = componentRef.current;
-      if (!element) {
-        console.error("No content to print: componentRef is null");
-        alert("Error: Resume content not found. Please try again.");
+      if (!window.ethereum) {
+        alert("Please install MetaMask to proceed.");
         return;
       }
-
-      // Use html2canvas to capture the element
-      const canvas = await html2canvas(element, {
-        scale: 2, // Increased scale for better resolution
-        useCORS: true,
-        logging: true,
-        onclone: (doc, element) => {
-          console.log("Cloned element for rendering:", element);
-          // Adjust styles for PDF rendering
-          element.style.fontFamily = "'Times New Roman', Times, serif";
-          element.style.width = "210mm"; // A4 width
-          element.style.maxWidth = "none"; // Remove max-width constraint
-          // Debug: Log styles to check for oklch
-          const computedStyles = doc.defaultView.getComputedStyle(element);
-          for (let prop of computedStyles) {
-            const value = computedStyles.getPropertyValue(prop);
-            if (value.includes("oklch")) {
-              console.warn(`Found oklch in ${prop}: ${value}`);
-            }
-          }
-        },
-      });
-
-      console.log("Canvas created:", canvas);
-
-      const imgData = canvas.toDataURL("image/jpeg"); // JPEG + 70% quality
-
+  
+      // Step 1: Request wallet connection
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+  
+      // Step 2: Set provider and signer
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+  
+      // Step 3: Connect to contract
+      const contract = getCVPaymentContract(signer);
+  
+      // Step 4: Always charge on every download
+      const price = await contract.cvPriceWei();
+      const tx = await contract.purchaseCV({ value: price });
+      await tx.wait(); // wait for confirmation
+      alert("Payment successful! Now downloading resume...");
+  
+      // Step 5: Generate and download PDF
+      const element = componentRef.current;
+      if (!element) {
+        alert("Resume content missing.");
+        return;
+      }
+  
+      const canvas = await html2canvas(element, { scale: 2 });
+      const imgData = canvas.toDataURL("image/jpeg");
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "mm",
         format: "a4",
       });
-
-      const pageWidth = 210; // A4 width in mm
-      const pageHeight = 297; // A4 height in mm
-      const margin = 2; // 10mm margins
-      const imgWidth = pageWidth - 2 * margin; // Adjusted width to fit A4 with margins
+  
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 2;
+      const imgWidth = pageWidth - 2 * margin;
       const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  
       let heightLeft = imgHeight;
       let position = margin;
-
-      // Add the first page
+  
       pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
       heightLeft -= pageHeight - 2 * margin;
-
-      // Add additional pages if the content is longer than one page
+  
       while (heightLeft > 0) {
         position = heightLeft - imgHeight + margin;
         pdf.addPage();
         pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
         heightLeft -= pageHeight - 2 * margin;
       }
-
-      // Save the PDF
+  
       pdf.save(`${resumeData.name || "Resume"}.pdf`);
-    } catch (error) {
-      console.error("Error generating PDF:", error);
-      alert("Error generating PDF. Please try again.");
+    } catch (err) {
+      console.error("Error during payment/download:", err);
+      alert("Something went wrong. Please try again.");
     } finally {
       setIsDownloading(false);
     }
   };
+  
+  // const handleDownload = async () => {
+  //   setIsDownloading(true);
+  //   console.log("Initiating PDF generation...");
+  //   try {
+  //     const element = componentRef.current;
+  //     if (!element) {
+  //       console.error("No content to print: componentRef is null");
+  //       alert("Error: Resume content not found. Please try again.");
+  //       return;
+  //     }
+
+  //     // Use html2canvas to capture the element
+  //     const canvas = await html2canvas(element, {
+  //       scale: 2, // Increased scale for better resolution
+  //       useCORS: true,
+  //       logging: true,
+  //       onclone: (doc, element) => {
+  //         console.log("Cloned element for rendering:", element);
+  //         // Adjust styles for PDF rendering
+  //         element.style.fontFamily = "'Times New Roman', Times, serif";
+  //         element.style.width = "210mm"; // A4 width
+  //         element.style.maxWidth = "none"; // Remove max-width constraint
+  //         // Debug: Log styles to check for oklch
+  //         const computedStyles = doc.defaultView.getComputedStyle(element);
+  //         for (let prop of computedStyles) {
+  //           const value = computedStyles.getPropertyValue(prop);
+  //           if (value.includes("oklch")) {
+  //             console.warn(`Found oklch in ${prop}: ${value}`);
+  //           }
+  //         }
+  //       },
+  //     });
+
+  //     console.log("Canvas created:", canvas);
+
+  //     const imgData = canvas.toDataURL("image/jpeg");
+
+  //     const pdf = new jsPDF({
+  //       orientation: "portrait",
+  //       unit: "mm",
+  //       format: "a4",
+  //     });
+
+  //     const pageWidth = 210; // A4 width in mm
+  //     const pageHeight = 297; // A4 height in mm
+  //     const margin = 2; // 10mm margins
+  //     const imgWidth = pageWidth - 2 * margin; // Adjusted width to fit A4 with margins
+  //     const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  //     let heightLeft = imgHeight;
+  //     let position = margin;
+
+  //     // Add the first page
+  //     pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
+  //     heightLeft -= pageHeight - 2 * margin;
+
+  //     // Add additional pages if the content is longer than one page
+  //     while (heightLeft > 0) {
+  //       position = heightLeft - imgHeight + margin;
+  //       pdf.addPage();
+  //       pdf.addImage(imgData, "PNG", margin, position, imgWidth, imgHeight);
+  //       heightLeft -= pageHeight - 2 * margin;
+  //     }
+
+  //     // Save the PDF
+  //     pdf.save(`${resumeData.name || "Resume"}.pdf`);
+  //   } catch (error) {
+  //     console.error("Error generating PDF:", error);
+  //     alert("Error generating PDF. Please try again.");
+  //   } finally {
+  //     setIsDownloading(false);
+  //   }
+  // };
 
   const handleLogout = (e) => {
     e.stopPropagation();
@@ -153,6 +221,7 @@ const Resume = () => {
         </div>
       </div>
       <div ref={componentRef}>
+        {/* console.log("qqqqqqqqqqqqq", componentRef);     */}
         <div
           id="resume-content"
           className="max-w-4xl mx-auto bg-white p-4 shadow-lg"
@@ -181,7 +250,9 @@ const Resume = () => {
                 {resumeData.summary}
               </p>
             </div>
-          ) : ("")}
+          ) : (
+            ""
+          )}
           {/* Skills */}
           {resumeData.skills && resumeData.skills.length > 0 && (
             <div className="mb-4">
